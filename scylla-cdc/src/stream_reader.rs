@@ -3,16 +3,20 @@
 use std::cmp::{max, min};
 use std::sync::Arc;
 use std::time;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
+use futures::stream::FuturesUnordered;
+use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
-use scylla::frame::value::Timestamp;
+use scylla::frame::value::{SerializedValues, Timestamp, ValueList};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::transport::errors::{DbError, QueryError};
 use scylla::{Bytes, QueryResult, Session};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::{enabled, warn};
+use uuid::Uuid;
 
 use crate::cdc_types::{GenerationTimestamp, StreamID};
 use crate::checkpoints::{start_saving_checkpoints, CDCCheckpointSaver, Checkpoint};
@@ -36,6 +40,11 @@ pub struct CDCReaderConfig {
 /// A wrapper for `Session` objects used to make mocking the Session possible.
 #[async_trait]
 trait StreamSession: Sync + Send {
+    async fn query(
+        &self,
+        query: &str,
+        values: &SerializedValues,
+    ) -> Result<QueryResult, QueryError>;
     async fn prepare_statement(&self, query: String) -> Result<PreparedStatement, QueryError>;
     async fn execute_paged_statement(
         &self,
@@ -49,6 +58,14 @@ trait StreamSession: Sync + Send {
 
 #[async_trait]
 impl StreamSession for Session {
+    async fn query(
+        &self,
+        query: &str,
+        values: &SerializedValues,
+    ) -> Result<QueryResult, QueryError> {
+        self.query(query, values).await
+    }
+
     async fn prepare_statement(&self, query: String) -> Result<PreparedStatement, QueryError> {
         self.prepare(query).await
     }
@@ -101,6 +118,32 @@ impl StreamReader {
         table_name: String,
         mut consumer: Box<dyn Consumer>,
     ) -> anyhow::Result<()> {
+        let time_query = &format!("SELECT \"cdc$time\" FROM {}.{}_scylla_cdc_log WHERE \"cdc$stream_id\" = ? LIMIT 1 BYPASS CACHE", keyspace, table_name);
+        let first_timestamp = self
+            .stream_id_vec
+            .iter()
+            .map(|id| async move {
+                self.session
+                    .query(time_query, &(id,).serialized().unwrap())
+                    .await
+            })
+            .collect::<FuturesUnordered<_>>()
+            .err_into::<anyhow::Error>()
+            .try_filter_map(|res| async move {
+                anyhow::Ok(res.maybe_first_row_typed::<(Uuid,)>()?.map(|row| {
+                    chrono::Duration::seconds(row.0.get_timestamp().unwrap().to_unix().0 as i64)
+                }))
+            })
+            .try_fold(
+                chrono::Duration::from_std(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap(),
+                )
+                .unwrap(),
+                |min_ts, ts| async move { Ok(min(min_ts, ts)) },
+            )
+            .await?;
         let query = format!(
             "SELECT * FROM {}.{}_scylla_cdc_log \
             WHERE \"cdc$stream_id\" in ? \
@@ -109,7 +152,10 @@ impl StreamReader {
             keyspace, table_name
         );
         let query_base = self.session.prepare_statement(query).await?;
-        let mut window_begin = self.config.lower_timestamp;
+        let mut window_begin = max(
+            self.config.lower_timestamp,
+            first_timestamp - chrono::Duration::from_std(self.config.safety_interval)?,
+        );
         let window_size = chrono::Duration::from_std(self.config.window_size)?;
         let safety_interval = chrono::Duration::from_std(self.config.safety_interval)?;
         let mut checkpoint = Checkpoint {
@@ -398,6 +444,14 @@ mod tests {
 
     #[async_trait]
     impl StreamSession for TimeoutSession {
+        async fn query(
+            &self,
+            query: &str,
+            values: &SerializedValues,
+        ) -> Result<QueryResult, QueryError> {
+            self.session.query(query, values).await
+        }
+
         async fn prepare_statement(&self, query: String) -> Result<PreparedStatement, QueryError> {
             self.session.prepare(query).await
         }
