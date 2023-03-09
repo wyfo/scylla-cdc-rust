@@ -22,7 +22,7 @@ impl Replicator {
         dest_keyspace: String,
         dest_tables: Vec<String>,
         start_timestamp: chrono::Duration,
-        window_size: time::Duration,
+        page_size: i32,
         safety_interval: time::Duration,
         sleep_interval: time::Duration,
     ) -> anyhow::Result<(Self, FuturesUnordered<RemoteHandle<anyhow::Result<()>>>)> {
@@ -42,7 +42,7 @@ impl Replicator {
                 .keyspace(&source_keyspace)
                 .table_name(&source_table)
                 .start_timestamp(start_timestamp)
-                .window_size(window_size)
+                .page_size(page_size)
                 .safety_interval(safety_interval)
                 .sleep_interval(sleep_interval)
                 .consumer_factory(Arc::new(factory))

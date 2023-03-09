@@ -24,7 +24,7 @@ const TIMEOUT_FACTOR: u128 = 2;
 #[derive(Clone)]
 pub struct CDCReaderConfig {
     pub lower_timestamp: chrono::Duration,
-    pub window_size: time::Duration,
+    pub page_size: i32,
     pub safety_interval: time::Duration,
     pub sleep_interval: time::Duration,
     pub should_load_progress: bool,
@@ -108,9 +108,9 @@ impl StreamReader {
             AND \"cdc$time\" < minTimeuuid(?)  BYPASS CACHE",
             keyspace, table_name
         );
-        let query_base = self.session.prepare_statement(query).await?;
+        let mut query_base = self.session.prepare_statement(query).await?;
+        query_base.set_page_size(self.config.page_size);
         let mut window_begin = self.config.lower_timestamp;
-        let window_size = chrono::Duration::from_std(self.config.window_size)?;
         let safety_interval = chrono::Duration::from_std(self.config.safety_interval)?;
         let mut checkpoint = Checkpoint {
             timestamp: window_begin.to_std()?,
@@ -153,11 +153,10 @@ impl StreamReader {
         loop {
             let now_timestamp =
                 chrono::Duration::milliseconds(chrono::Local::now().timestamp_millis());
-            let window_end = max(
-                window_begin,
-                min(window_begin + window_size, now_timestamp - safety_interval),
-            );
-
+            let mut window_end = now_timestamp - safety_interval;
+            if let Some(ts) = self.upper_timestamp.lock().await.as_ref() {
+                window_end = min(window_end, *ts);
+            }
             self.fetch_and_consume_rows(
                 &query_base,
                 &mut consumer,
@@ -298,7 +297,7 @@ mod tests {
 
     const SECOND_IN_MILLIS: u64 = 1_000;
     const SLEEP_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
-    const WINDOW_SIZE: u64 = SECOND_IN_MILLIS / 10 * 3;
+    const PAGE_SIZE: i32 = 5000;
     const SAFETY_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
     const START_TIME_DELAY_IN_SECONDS: i64 = 2;
 
@@ -307,13 +306,13 @@ mod tests {
             session: &Arc<Session>,
             stream_ids: Vec<StreamID>,
             start_timestamp: chrono::Duration,
-            window_size: time::Duration,
+            page_size: i32,
             safety_interval: time::Duration,
             sleep_interval: time::Duration,
         ) -> StreamReader {
             let config = CDCReaderConfig {
                 lower_timestamp: start_timestamp,
-                window_size,
+                page_size,
                 safety_interval,
                 sleep_interval,
                 should_load_progress: false,
@@ -336,14 +335,13 @@ mod tests {
 
         let start_timestamp = now() - chrono::Duration::seconds(START_TIME_DELAY_IN_SECONDS);
         let sleep_interval = time::Duration::from_millis(SLEEP_INTERVAL);
-        let window_size = time::Duration::from_millis(WINDOW_SIZE);
         let safety_interval = time::Duration::from_millis(SAFETY_INTERVAL);
 
         let reader = StreamReader::test_new(
             session,
             stream_id_vec,
             start_timestamp,
-            window_size,
+            PAGE_SIZE,
             safety_interval,
             sleep_interval,
         );

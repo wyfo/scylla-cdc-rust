@@ -118,7 +118,7 @@ mod tests {
 
     const SECOND_IN_MILLIS: u64 = 1_000;
     const SLEEP_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
-    const WINDOW_SIZE: u64 = SECOND_IN_MILLIS / 10 * 3;
+    const PAGE_SIZE: i32 = 3000;
     const SAFETY_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
 
     #[tokio::test]
@@ -143,7 +143,7 @@ mod tests {
             .table_name(TEST_TABLE)
             .start_timestamp(start)
             .end_timestamp(end)
-            .window_size(time::Duration::from_millis(WINDOW_SIZE))
+            .page_size(PAGE_SIZE)
             .safety_interval(time::Duration::from_millis(SAFETY_INTERVAL))
             .sleep_interval(time::Duration::from_millis(SLEEP_INTERVAL))
             .consumer_factory(Arc::new(PrinterConsumerFactory))

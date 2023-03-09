@@ -4,10 +4,8 @@
 //! while data from each stream is being read concurrently by different StreamReaders.
 //!
 //! Every StreamReader reads all CDC rows added in a time window
-//! (not longer than `window_size`), then waiting for amount of time equal to `sleep_interval`
-//! before reading the next window.
-//! Before a newly added row is being read by the reader,
-//! a set amount of time, represented by `safety_interval`, must pass.
+//! (bounded by `now - safety_interval`), then waiting for amount of time equal to
+//! `sleep_interval` before reading the next window.
 //!
 //! For more information about the stream generations,
 //! please refer to the [Scylla CDC documentation](https://docs.scylladb.com/using-scylla/cdc/cdc-stream-generations/).
@@ -32,7 +30,7 @@ use crate::stream_reader::{CDCReaderConfig, StreamReader};
 
 const SECOND_IN_MILLIS: i64 = 1_000;
 const DEFAULT_SLEEP_INTERVAL: i64 = SECOND_IN_MILLIS * 10;
-const DEFAULT_WINDOW_SIZE: i64 = SECOND_IN_MILLIS * 60;
+const DEFAULT_PAGE_SIZE: i32 = 5000;
 const DEFAULT_SAFETY_INTERVAL: i64 = SECOND_IN_MILLIS * 30;
 const DEFAULT_PAUSE: u64 = 10;
 
@@ -248,7 +246,7 @@ pub struct CDCLogReaderBuilder {
     table_name: Option<String>,
     start_timestamp: chrono::Duration,
     end_timestamp: chrono::Duration,
-    window_size: time::Duration,
+    page_size: i32,
     safety_interval: time::Duration,
     sleep_interval: time::Duration,
     consumer_factory: Option<Arc<dyn ConsumerFactory>>,
@@ -263,7 +261,7 @@ impl CDCLogReaderBuilder {
     ///
     /// # Default configuration
     /// * start_timestamp: current timestamp
-    /// * window_size: 60 seconds
+    /// * page_size: 5000
     /// * safety_interval: 30 seconds
     /// * sleep_interval: 10 seconds
     /// * end_timestamp: the maximum possible duration - i64::MAX milliseconds
@@ -281,7 +279,7 @@ impl CDCLogReaderBuilder {
                 .unwrap(),
         )
         .unwrap();
-        let window_size = time::Duration::from_millis(DEFAULT_WINDOW_SIZE as u64);
+        let page_size = DEFAULT_PAGE_SIZE;
         let safety_interval = time::Duration::from_millis(DEFAULT_SAFETY_INTERVAL as u64);
         let sleep_interval = time::Duration::from_millis(DEFAULT_SLEEP_INTERVAL as u64);
         let consumer_factory = None;
@@ -295,7 +293,7 @@ impl CDCLogReaderBuilder {
             table_name,
             start_timestamp,
             end_timestamp,
-            window_size,
+            page_size,
             safety_interval,
             sleep_interval,
             consumer_factory,
@@ -347,11 +345,11 @@ impl CDCLogReaderBuilder {
         self
     }
 
-    /// Set window size for the [`CDCLogReader`] instance
+    /// Set page size for the [`CDCLogReader`] instance
     /// to read data from the user specified CDC log table window by window.
-    /// Default window size is 60 seconds.
-    pub fn window_size(mut self, window_size: time::Duration) -> Self {
-        self.window_size = window_size;
+    /// Default page size is 5000.
+    pub fn page_size(mut self, page_size: i32) -> Self {
+        self.page_size = page_size;
         self
     }
 
@@ -457,7 +455,7 @@ impl CDCLogReaderBuilder {
 
         let config = CDCReaderConfig {
             lower_timestamp: start_timestamp,
-            window_size: self.window_size,
+            page_size: self.page_size,
             safety_interval: self.safety_interval,
             sleep_interval: self.sleep_interval,
             should_load_progress: self.should_load_progress,

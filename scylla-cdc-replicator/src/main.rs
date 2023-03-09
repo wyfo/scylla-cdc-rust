@@ -28,9 +28,9 @@ struct Args {
     #[clap(short, long, action = clap::ArgAction::Set)]
     destination: String,
 
-    /// Window size in seconds
-    #[clap(long, default_value_t = 60., action = clap::ArgAction::Set)]
-    window_size: f64,
+    /// Page size in seconds
+    #[clap(long, default_value_t = 5000, action = clap::ArgAction::Set)]
+    page_size: i32,
 
     /// Safety interval in seconds
     #[clap(long, default_value_t = 30., action = clap::ArgAction::Set)]
@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         args.keyspace,
         tables,
         start_timestamp,
-        Duration::from_secs_f64(args.window_size),
+        args.page_size,
         Duration::from_secs_f64(args.safety_interval),
         sleep_interval,
     )

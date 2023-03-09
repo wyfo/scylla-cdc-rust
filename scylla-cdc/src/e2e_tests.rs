@@ -23,7 +23,7 @@ mod tests {
 
     const SECOND_IN_MILLIS: u64 = 1_000;
     const SLEEP_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
-    const WINDOW_SIZE: u64 = SECOND_IN_MILLIS / 10 * 3;
+    const PAGE_SIZE: i32 = 5000;
     const SAFETY_INTERVAL: u64 = SECOND_IN_MILLIS / 10;
 
     type OperationsMap = Arc<Mutex<HashMap<Vec<PrimaryKeyValue>, VecDeque<Operation>>>>;
@@ -297,7 +297,7 @@ mod tests {
                 .table_name(self.table_name.as_str())
                 .start_timestamp(start - chrono::Duration::seconds(2))
                 .end_timestamp(end + chrono::Duration::seconds(2))
-                .window_size(time::Duration::from_millis(WINDOW_SIZE))
+                .page_size(PAGE_SIZE)
                 .safety_interval(time::Duration::from_millis(SAFETY_INTERVAL))
                 .sleep_interval(time::Duration::from_millis(SLEEP_INTERVAL))
                 .consumer_factory(factory)
@@ -429,7 +429,7 @@ mod tests {
             .table_name(test.table_name.as_str())
             .start_timestamp(start)
             .end_timestamp(end)
-            .window_size(time::Duration::from_millis(WINDOW_SIZE))
+            .page_size(PAGE_SIZE)
             .safety_interval(time::Duration::from_millis(SAFETY_INTERVAL))
             .sleep_interval(time::Duration::from_millis(SLEEP_INTERVAL))
             .consumer_factory(factory.clone())
